@@ -4,6 +4,7 @@ import logging
 logger = logging.getLogger()
 
 def get_fingerprint(data):
+    # Given SSH Public key data, generate its fingerprint
     import tempfile
     import os
     import subprocess
@@ -30,6 +31,7 @@ def get_fingerprint(data):
         return None
 
 def get_fingerprint_base64(data):
+    # given ssh public key data, generate a fingerprint and base64 encode it ... this leads to a string which is useful for filenames
     import base64
     fp = get_fingerprint(data)
     return base64.urlsafe_b64encode(fp.encode()).decode()
@@ -37,15 +39,20 @@ def get_fingerprint_base64(data):
 
 
 def sign_cert(principals, pubkey, period, ca):
+    # given a public key and a list of users that key should work for, generate an apprporaite certificate
+    # also logs the command used for all signing so we have a record of who was issued a cert when for audit
     import subprocess
     import tempfile
     import os
+    import logging
+    logger = logging.getLogger('signinglog')
     keyid = get_fingerprint_base64(pubkey)
     pubkeyfile = tempfile.NamedTemporaryFile(delete=False, suffix='.pub', mode='w+b')
     pubkeyfile.write(pubkey.encode('utf-8'))
     pubkeyfile.close()
     sign = ['ssh-keygen', '-s', ca, '-I', keyid, '-n', ','.join(set(principals)), 
             '-V', "+{}s".format(str(int(period))), pubkeyfile.name]
+    logger.info(sign)
     signprocess = subprocess.Popen(sign, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     (stderr, stdout) = signprocess.communicate()
     certfilename=pubkeyfile.name[:-4]+"-cert.pub"
@@ -56,28 +63,31 @@ def sign_cert(principals, pubkey, period, ca):
     return cert
 
 def get_cert_options(ca, subject):
+    # Helper function: given the user logging in, what options should be applied to their certificate eg 
+    # expiry date usernames etc.
+    # TODO: Support a force_command option ... This would be needed to lock down "secure" clusters were data egress must be approved by a data custodian.
     import os
     import yaml
     import datetime
     optionsfile = os.path.join(app.config['CONFIG'],'{}.yml'.format(ca))
     with open(optionsfile,'r') as f:
         try:
-            data = yaml.safe_load(f.read())[subject]
+            cadata = yaml.safe_load(f.read())
+            data = cadata[subject]
             data['ca'] = ca
             if not 'max_expiry' in data:
-                data['max_expiry'] = int(datetime.timedelta(days=1).total_seconds())
+                if 'max_expiry' in cadata:
+                    data['max_expiry'] = cadata['max_expiry']
+                else:
+                    data['max_expiry'] = int(datetime.timedelta(days=1).total_seconds())
             if not 'mail' in data:
                 data['mail'] = subject
             return data
         except KeyError:
             abort(401,{'message':'{} does not have an account'.format(subject)})
 
-
-class Echo(Resource):
-    def get(self):
-        return "{}".format(request.headers)
-
 class Authorize(Resource):
+    # Authorisation endpoint. This doesn't generate the certificate, but forces the user to login with OIDC, and passes the token back to the user program/agent eg ssossh, strudel2
     def get(self, ca):
         sub = request.headers.get(app.config['SUBJECT_HEADER'])
         if sub is None:
@@ -110,6 +120,9 @@ class Authorize(Resource):
         return redirect(url,302)
 
 class Create(Resource):
+    # Create endpoint. Allows a user to setup a new CA. For example if they want to use strudel2 on their own VM
+    # Also allows you to update the list of emails -> usernames via HTTP rather than logging in
+    # this doesn't require authentication.
     def post(self):
         import yaml
         data = request.get_json(force=True)
@@ -131,6 +144,7 @@ class Create(Resource):
         os.umask(oldumask)
 
 class Sign(Resource):
+    # Generate a certificate. This ss an OAuth2 Implicit Protected Resource (so OIDC is all done by this point)
     def post(self, ca):
         import jwt
         import flask
@@ -158,6 +172,7 @@ class Sign(Resource):
         cert=sign_cert(cert_options['principals'],pubkey,period,cafile)
         return flask.jsonify({'certificate': cert,'user':",".join(cert_options['principals']),'mail':cert_options['mail']})
 
+
 app = Flask(__name__)
 import os
 key=os.urandom(24)
@@ -165,5 +180,4 @@ app.config['SECRET']=key
 api = Api(app)
 api.add_resource(Create,'/create')
 api.add_resource(Authorize,'/authorize/<string:ca>')
-api.add_resource(Echo,'/echo')
 api.add_resource(Sign,'/sign/<string:ca>')
