@@ -1,0 +1,3 @@
+ssossh: 
+ - https://localhost:4200/sshauthz_callback
+ - http://localhost:4200/sshauthz_callback
