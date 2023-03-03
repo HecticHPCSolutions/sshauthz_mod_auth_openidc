@@ -1,13 +1,83 @@
+# SSH Auth Z
+
+SSHAuthZ is the name we (Chris) has been using for the web service part of generating SSH Certificates using Single Sign On Authentication.
+This is the third rewrite of this code. Each rewrite its gets smaller, more readable and hopefully has a more reasonable security footprint.
+
+For other similar projects check out
+
+SmallStepCA https://smallstep.com/docs/step-ca
+Teleport https://goteleport.com/
+Hashicorp Vault https://developer.hashicorp.com/vault/docs/secrets/ssh/signed-ssh-certificates
+
+None of these quite fit the bill for what we wanted to do, so we wrote this.
+
+
+
+### What are SSH certificates?
+
+SSH Certificates are very much like ssh public keys, but with two big advantages:
+
+1. They don't need to go in the ~/.ssh/authorized_keys file, which means in turn
+   1. You don't have to put new entries in that file when you onboard team members
+   2. you don't have to remove entries from that file when you offboard team members
+2. They can be time limited, and auto-expirying
+
+In order to do this, ssh certifcates (like SSL/TLS/x509 certifcates) have the concept of a certificate authority. The certificate authoirty (CA) consistes of a private secret key and a public key. Instead of trusting entries in the authorised key file, the ssh server is configured to trust certificates signed using the private key matching the public key (The key signature is generated using the private CA key. The key signature is verified using the public CA key. The public CA key is installed on the SSH server so it can verify signatures.)
+
+
+### What is Single Sign On (SSO)
+
+Single Sign On is the process by which you can authenticate a person by querying their home institution. This means they don't need another password, and you don't need to store a password database.
+
+This repository contains code and instructions to deploy a tool combining Single Sign On with SSH Certificates. This means that we can authenticate a user using standard web based techniques, like asking them to login to the Monash University web site, but then allow them to use ssh to connect to a service (rather than being stuck in the browser).
+
+### Why would I want SSO SSH Certificates?
+
+SSO + SSH certificates give us two things, basically for free:
+
+1. We get MultiFactor Authentication. Most SSO identity services used by universities are already using MFA. I won't go into the reasons why MFA is good for security
+2. We get automatic deprovisioning of access. We have a great deal of difficultly finding enough time to do deprovisioning properly, however we know that the upstream Identity Providers (eg Monash Uni) are good at deprovisioning. This way we can rely on upstream providers rather than devoting resources to it.
+
+## How does it all work?
+
+There are three components to this:
+
+1. A web server which does single sign on and generates SSH certificates
+2. A helper script to request the certificate and put it in your ssh agent. You could do this all with the web browser and command line, but there its nice to have a script
+
+From a users persepective we expect things to look like:
+
+1. Open a terminal and run the helper script (ssossh).
+2. Select which ssh service they are trying to login into (incase of different ID domains)
+3. A web browser opens, and they login with their usual OpenID Connect account (eg Google or Monash)
+4. The web browser says "You may now close this window"
+5. The user switches back to the terminal and types `ssh ...` as per usual.
+
+This repo is about the web server which does single sign on and has OAuth2 Implicit protected resource to generate the certificates.
+
+For the helper script see  https://gitlab.erc.monash.edu.au/hpc-team/ssossh
+
+For hints and tips see the bottom of this readme.
+
+## How does the web server work?
+
 This repo runs an OpenID connect to SSH Certificate translation service.
 
 It relies on the apache2 mod_auth_openidc component: https://github.com/zmartzone/mod_auth_openidc
 
+Almost all the code is in the few hundred lines of code at https://gitlab.erc.monash.edu.au/hpc-team/sshauthz_mod_auth_openidc/-/blob/main/app/__init__.py
+
+The other code in this repo is basically initialisation code and should be recognisable as boilerplate code.
+
 We use OIDC to authenticate the user, then an OAuth2 Implicit resource API to allow the user/end application to generate a certificate.
+
 There are two configurations to perform:
 1. The certificate authority. 
    - When user `chris.hines@monash.edu` turns up, what key will they sign with and what username will we assign
 2. The OAuth2 Implicit clients
    - The OAuth2 flow requires that we redirect the web browser to pass information. Since we don't want to pass information to an evesdropper, we restrict the valid URLs. This is what the clients are all about.
+
+
 
 ## Deployment (overview)
 
@@ -134,7 +204,7 @@ You should also find that there are now two new files on the server. They've got
 Grab a copy of https://gitlab.erc.monash.edu.au/hpc-team/ssossh. Generate the auth config. Fill in the template with these values:
 1. The fqdn
 2. The fingerprint
-   - You can get this by `ssh-keygen -l -f ca.pub`. Note that it will be JUST the middle value. Not the integer at the begining. Not the comment at the end
+   - You can get this by `ssh-keygen -l -f ca.pub`. Note that it will be JUST the middle value. Not the integer at the beginning. Not the comment at the end
 3. The base64 encoded fingerprint
    - Use `echo -n <fp> | base64`. Note that the `-n` is important as it tells echo not to output a trailing newline. We don't want the newline in the base64 encoding.
 
@@ -156,8 +226,11 @@ Grab a copy of https://gitlab.erc.monash.edu.au/hpc-team/ssossh. Generate the au
 
 Finally use `python3 -m ssossh <configfilename>`. At the end you should have a shiny new certificate.
 
+If someone else has already setup the CA for you, they should give you this file. You will usually put it in your home directory and call it `.authservers.json` ... the helper script knows to look there by default.
 
-## How does it work?
+## Hints and tips
+
+### How does signing work?
 
 The central idea is the command:
 
@@ -171,7 +244,7 @@ If you ever need to refer to this certificate (in for example a key revocation l
 
 The rest of the code is just ensures that you log in with okta/OpenID connect and translates one of the attributes (in this case email) into the list of valid users.
 
-## SSH Agents and authsocks and config files
+### SSH Agents and authsocks and config files
 
 There are some warts around using ssh agents that might make you want to write some shell scripts for to make your life easier.
 One of the really annoying things is if you run a single agent and add too many certificates or keys to is (i.e. you admin too many different systems) you will start getting error messages from the ssh servers when you login. This is because an ssh server will let you try about 5 keys by default before it decides you're trying to brute force and shuts you down. So you may end up needing to run one agent per server. 
