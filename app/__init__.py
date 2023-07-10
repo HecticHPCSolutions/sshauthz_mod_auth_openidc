@@ -2,6 +2,7 @@ from flask import Flask, request, abort, redirect
 from flask_restful import Api, Resource
 import logging
 logger = logging.getLogger()
+ALLOWCREATE=False
 
 def get_fingerprint(data):
     # Given SSH Public key data, generate its fingerprint
@@ -31,7 +32,7 @@ def get_fingerprint(data):
         return None
 
 def get_fingerprint_base64(data):
-    # given ssh public key data, generate a fingerprint and base64 encode it ... this leads to a string which is useful for filenames
+    # given ssh private key data, generate a fingerprint and base64 encode it ... this leads to a string which is useful for filenames
     import base64
     fp = get_fingerprint(data)
     return base64.urlsafe_b64encode(fp.encode()).decode()
@@ -178,6 +179,7 @@ import os
 key=os.urandom(24)
 app.config['SECRET']=key
 api = Api(app)
-api.add_resource(Create,'/create')
+if ALLOWCREATE:
+    api.add_resource(Create,'/create')
 api.add_resource(Authorize,'/authorize/<string:ca>')
 api.add_resource(Sign,'/sign/<string:ca>')
