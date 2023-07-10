@@ -10,7 +10,7 @@
 
 1. Clone this repo
 1. Also clone https://github.com/HecticHPCSolutions/ssossh
-1. Generate a CA with a command line `ssh-keygen -t ed25519 -f ca`
+1. Generate a CA with a command line `ssh-keygen -t ed25519 -f ca` .... Don't set a passphrase here
 1. Generate a principals.yml file with content like. This file must include the username you want to use. it may include a list of usernames as shown
 ```
 max_expiry: 86400
@@ -22,7 +22,8 @@ chris.hines@monash.edu:
     - ec2-user
     - debian
 ```
-1. run `python3 ./sshauthz_mod_auth_oidc/create_ca.py ./ca ./princials.yml ssossh_conf.json`
+(Note, my demo server is using Google IdP. If your employer has signed you up for google apps you should be golden, otherwise use your personal gmail)
+1. run `python3 ./sshauthz_mod_auth_openidc/create_ca.py ./ca ./principals.yml ssossh_conf.json`
 1. run `PYTHONPATH=./ssossh python3 -m ssossh -c ./ssossh_conf.json`
 1. cat ca.pub ... copy the content to clipboard
 1. Choose a SSH server that you already have access to. Paste the clipboard content into ~/.ssh/authorized_keys
